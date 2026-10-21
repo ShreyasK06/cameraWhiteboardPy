@@ -4,11 +4,12 @@ import numpy as np
 import math
 
 class FingerWhiteboard:
-    def __init__(self, open_camera=True, size=(1280, 720), keyboard_hints=True):
+    def __init__(self, open_camera=True, size=(1280, 720), keyboard_hints=True, lite_ui=False):
         # open_camera=False lets another frontend (the Streamlit app) feed frames in
         # through process_frame() instead of reading from a local webcam.
         self.width, self.height = size
         self.keyboard_hints = keyboard_hints  # False in the browser, where there are no key shortcuts
+        self.lite_ui = lite_ui  # skip the full-frame alpha blends (header glow, status panel) to cut per-frame cost
 
         # Initialize MediaPipe hands with optimized settings for better performance
         self.mp_hands = mp.solutions.hands
@@ -183,11 +184,14 @@ class FingerWhiteboard:
         cv2.rectangle(frame, (0, 0), (w, header_height), self.ui_background_color, -1)
         
         # Gradient effect for header
-        for i in range(5):
-            alpha = 0.2 - (i * 0.03)
-            overlay = frame.copy()
-            cv2.rectangle(overlay, (0, header_height - i), (w, header_height + 5 - i), self.ui_accent_color, -1)
-            frame = cv2.addWeighted(frame, 1 - alpha, overlay, alpha, 0)
+        if self.lite_ui:
+            cv2.rectangle(frame, (0, header_height), (w, header_height + 3), self.ui_accent_color, -1)
+        else:
+            for i in range(5):
+                alpha = 0.2 - (i * 0.03)
+                overlay = frame.copy()
+                cv2.rectangle(overlay, (0, header_height - i), (w, header_height + 5 - i), self.ui_accent_color, -1)
+                frame = cv2.addWeighted(frame, 1 - alpha, overlay, alpha, 0)
         
         # App title with modern font - positioned better
         cv2.putText(frame, "AI WHITEBOARD", (20, 40), 
@@ -296,26 +300,29 @@ class FingerWhiteboard:
         panel_y = h - panel_height
         
         # Create gradient background
-        overlay = frame.copy()
-        cv2.rectangle(overlay, (0, panel_y), (w, h), self.ui_background_color, -1)
-        frame = cv2.addWeighted(frame, 0.8, overlay, 0.2, 0)
+        if not self.lite_ui:
+            # Lite mode draws the text straight onto the caller's frame. This blend rebinds
+            # `frame` to a new array, so in full mode the text below lands on a discarded copy.
+            overlay = frame.copy()
+            cv2.rectangle(overlay, (0, panel_y), (w, h), self.ui_background_color, -1)
+            frame = cv2.addWeighted(frame, 0.8, overlay, 0.2, 0)
         
         # Current gesture status
-        gesture_text = "🤚 Ready"
+        gesture_text = "READY"
         gesture_color = self.ui_secondary_text
         
         if hasattr(self, 'current_gesture'):
             if self.current_gesture == "DRAW":
-                gesture_text = "✏️ DRAWING"
+                gesture_text = "DRAWING"
                 gesture_color = (34, 197, 94)
             elif self.current_gesture == "ERASE":
-                gesture_text = "🗑️ ERASING"
+                gesture_text = "ERASING"
                 gesture_color = (239, 68, 68)
             elif self.current_gesture == "TRACKING":
-                gesture_text = "👁️ TRACKING"
+                gesture_text = "TRACKING"
                 gesture_color = (251, 191, 36)
             elif self.current_gesture == "NO_HAND":
-                gesture_text = "❌ NO HAND"
+                gesture_text = "NO HAND"
                 gesture_color = (239, 68, 68)
         
         cv2.putText(frame, gesture_text, (20, panel_y + 30), 
@@ -329,9 +336,9 @@ class FingerWhiteboard:
         
         # Instructions on the right
         instructions = [
-            "👍 Thumb + Pointer: Draw",
-            "✌️ Pointer + Middle: Erase", 
-            "1-8: Colors • +/-: Brush • C: Clear" if self.keyboard_hints else "Colors and brush: use the sidebar"
+            "Thumb + Pointer: Draw",
+            "Pointer + Middle: Erase", 
+            "1-8: Colors | +/-: Brush | C: Clear" if self.keyboard_hints else "Colors and brush: use the sidebar"
         ]
         
         for i, instruction in enumerate(instructions):

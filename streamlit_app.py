@@ -21,8 +21,8 @@ COLOR_NAMES = ["Purple", "Emerald", "Red", "Amber", "Pink", "Sky", "White", "Gra
 
 class WhiteboardProcessor(VideoProcessorBase):
     def __init__(self):
-        # 960x540 keeps per-frame cost low enough for a shared CPU.
-        self.board = FingerWhiteboard(open_camera=False, size=(960, 540), keyboard_hints=False)
+        # lite_ui skips the full-frame blends, which dominate the per-frame cost on a shared CPU.
+        self.board = FingerWhiteboard(open_camera=False, size=(800, 450), keyboard_hints=False, lite_ui=True)
 
     def recv(self, frame: av.VideoFrame) -> av.VideoFrame:
         out = self.board.process_frame(frame.to_ndarray(format="bgr24"))
@@ -50,7 +50,13 @@ ctx = webrtc_streamer(
     mode=WebRtcMode.SENDRECV,
     rtc_configuration=RTC_CONFIG,
     video_processor_factory=WhiteboardProcessor,
-    media_stream_constraints={"video": {"width": 640, "height": 480}, "audio": False},
+    # Ask for a small, capped-rate camera stream: less to encode, send and process means less lag.
+    media_stream_constraints={
+        "video": {"width": {"ideal": 640}, "height": {"ideal": 360}, "frameRate": {"ideal": 24, "max": 30}},
+        "audio": False,
+    },
+    # The stream is 800x450; stretch the player to the page width so the canvas is large.
+    video_html_attrs={"style": {"width": "100%", "margin": "0 auto"}, "controls": False, "autoPlay": True},
     async_processing=True,
 )
 
