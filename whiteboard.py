@@ -4,12 +4,13 @@ import numpy as np
 import math
 
 class FingerWhiteboard:
-    def __init__(self, open_camera=True, size=(1280, 720), keyboard_hints=True, lite_ui=False):
+    def __init__(self, open_camera=True, size=(1280, 720), keyboard_hints=True, lite_ui=False, show_overlay=True):
         # open_camera=False lets another frontend (the Streamlit app) feed frames in
         # through process_frame() instead of reading from a local webcam.
         self.width, self.height = size
         self.keyboard_hints = keyboard_hints  # False in the browser, where there are no key shortcuts
         self.lite_ui = lite_ui  # skip the full-frame alpha blends (header glow, status panel) to cut per-frame cost
+        self.show_overlay = show_overlay  # False: no header, palette, instructions or FPS on the video, only a gesture badge
 
         # Initialize MediaPipe hands with optimized settings for better performance
         self.mp_hands = mp.solutions.hands
@@ -47,6 +48,8 @@ class FingerWhiteboard:
             (156, 163, 175)  # Cool Gray
         ]
         self.color_names = ["Purple", "Emerald", "Red", "Amber", "Pink", "Sky", "White", "Gray"]
+        # The palette above is written as RGB but OpenCV draws BGR, so "Purple" came out red.
+        self.colors = [(b, g, r) for (r, g, b) in self.colors]
         self.current_color_index = 0
         self.draw_color = self.colors[0]
         self.brush_thickness = 15  # Much bolder brush
@@ -175,8 +178,23 @@ class FingerWhiteboard:
         for y in range(0, self.height, grid_spacing):
             cv2.line(self.canvas, (0, y), (self.width, y), grid_color, 1)
     
+    def draw_gesture_badge(self, frame):
+        """Small pill in the top-left corner showing the current gesture (used when the overlay is off)"""
+        label, color = {
+            "DRAW": ("DRAWING", (94, 197, 34)),
+            "ERASE": ("ERASING", (68, 68, 239)),
+            "TRACKING": ("TRACKING", (36, 191, 251)),
+        }.get(self.current_gesture, ("NO HAND" if self.current_gesture == "NO_HAND" else "READY", (175, 163, 156)))
+        (tw, th), _ = cv2.getTextSize(label, cv2.FONT_HERSHEY_DUPLEX, 0.6, 1)
+        cv2.rectangle(frame, (10, 10), (10 + tw + 36, 14 + th + 14), (30, 30, 30), -1)
+        cv2.circle(frame, (24, 10 + (th + 18) // 2), 6, color, -1)
+        cv2.putText(frame, label, (38, 10 + (th + 18) // 2 + th // 2), cv2.FONT_HERSHEY_DUPLEX, 0.6, (255, 255, 255), 1, cv2.LINE_AA)
+
     def draw_modern_ui(self, frame):
         """Draw modern UI elements with sleek design"""
+        if not self.show_overlay:
+            self.draw_gesture_badge(frame)
+            return frame
         h, w = frame.shape[:2]
         
         # Draw modern header bar with better spacing
@@ -369,8 +387,8 @@ class FingerWhiteboard:
         
         # Calculate and display FPS
         current_fps = self.calculate_fps()
-        if current_fps is not None:
-            cv2.putText(frame, f"FPS: {current_fps:.1f}", (20, frame.shape[0] - 30), 
+        if current_fps is not None and self.show_overlay:
+            cv2.putText(frame, f"FPS:{current_fps:.1f}", (20, frame.shape[0] - 30), 
                        cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
         
         current_gesture = "NONE"

@@ -24,7 +24,7 @@
 
 ## Web app (Streamlit)
 
-**Live demo: https://shreyask06-ai-whiteboard.streamlit.app** (press Start and allow camera access).
+**Live demo: https://shreyask06-camerawhiteboard.streamlit.app** (press Start and allow camera access).
 
 `streamlit_app.py` runs the same tracking and drawing code in the browser. The visitor's webcam is streamed to the server over WebRTC ([streamlit-webrtc](https://github.com/whitphx/streamlit-webrtc)); each frame goes through `FingerWhiteboard.process_frame`, and the annotated video comes back. Colour, brush size, clear and a PNG download are in the sidebar. Frames are processed in memory and are not stored.
 
