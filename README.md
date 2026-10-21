@@ -22,12 +22,25 @@
 | `c` | Clear the canvas |
 | `q` | Quit |
 
-## Run it
+## Web app (Streamlit)
+
+**Live demo: https://shreyask06-ai-whiteboard.streamlit.app** (press Start and allow camera access).
+
+`streamlit_app.py` runs the same tracking and drawing code in the browser. The visitor's webcam is streamed to the server over WebRTC ([streamlit-webrtc](https://github.com/whitphx/streamlit-webrtc)); each frame goes through `FingerWhiteboard.process_frame`, and the annotated video comes back. Colour, brush size, clear and a PNG download are in the sidebar. Frames are processed in memory and are not stored.
+
+```bash
+pip install -r requirements.txt
+streamlit run streamlit_app.py
+```
+
+To deploy on [Streamlit Community Cloud](https://share.streamlit.io): point it at this repo with `streamlit_app.py` as the main file, pick **Python 3.11** under Advanced settings (the pinned `mediapipe==0.10.21` has no wheels for newer Pythons), and set the app URL. `packages.txt` installs the system libraries OpenCV needs. On a shared CPU the stream runs at a lower frame rate than the desktop app, and some networks block WebRTC.
+
+## Run it on the desktop
 
 Requires Python 3.9+ and a webcam.
 
 ```bash
-pip install -r requirements.txt     # opencv-python, mediapipe, numpy
+pip install -r requirements.txt     # opencv-python, mediapipe, numpy, streamlit, streamlit-webrtc
 python whiteboard.py
 ```
 
@@ -42,7 +55,7 @@ Keep your hand clearly visible and well lit. The app prints its controls on laun
 
 ## Tech stack
 
-Python, OpenCV, MediaPipe, NumPy.
+Python, OpenCV, MediaPipe, NumPy, Streamlit with streamlit-webrtc for the browser version.
 
 ## Known limitations
 

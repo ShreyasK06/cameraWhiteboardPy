@@ -4,7 +4,12 @@ import numpy as np
 import math
 
 class FingerWhiteboard:
-    def __init__(self):
+    def __init__(self, open_camera=True, size=(1280, 720), keyboard_hints=True):
+        # open_camera=False lets another frontend (the Streamlit app) feed frames in
+        # through process_frame() instead of reading from a local webcam.
+        self.width, self.height = size
+        self.keyboard_hints = keyboard_hints  # False in the browser, where there are no key shortcuts
+
         # Initialize MediaPipe hands with optimized settings for better performance
         self.mp_hands = mp.solutions.hands
         self.hands = self.mp_hands.Hands(
@@ -17,16 +22,17 @@ class FingerWhiteboard:
         self.mp_drawing = mp.solutions.drawing_utils
         
         # Initialize camera with optimized settings
-        self.cap = cv2.VideoCapture(0)
-        self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, 1280)
-        self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 720)
-        self.cap.set(cv2.CAP_PROP_FPS, 60)              # Request higher FPS
-        self.cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)        # Reduce buffer for lower latency
-        self.cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc('M', 'J', 'P', 'G'))  # Use MJPEG for better performance
-        
+        self.cap = None
+        if open_camera:
+            self.cap = cv2.VideoCapture(0)
+            self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, self.width)
+            self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, self.height)
+            self.cap.set(cv2.CAP_PROP_FPS, 60)              # Request higher FPS
+            self.cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)        # Reduce buffer for lower latency
+            self.cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc('M', 'J', 'P', 'G'))  # Use MJPEG for better performance
+
         # Canvas setup - dark modern background with subtle grid
-        self.canvas = np.full((720, 1280, 3), 20, dtype=np.uint8)  # Dark charcoal background
-        self.add_grid_pattern()
+        self.reset_canvas()
         
         # Modern vibrant color palette
         self.colors = [
@@ -150,18 +156,23 @@ class FingerWhiteboard:
             cv2.circle(frame, (x, y), 12, color, 2)
             cv2.circle(frame, (x, y), 4, color, -1)
     
+    def reset_canvas(self):
+        """Blank the canvas (dark charcoal) and redraw the grid"""
+        self.canvas = np.full((self.height, self.width, 3), 20, dtype=np.uint8)
+        self.add_grid_pattern()
+
     def add_grid_pattern(self):
         """Add subtle grid pattern to canvas"""
         grid_color = (25, 25, 25)  # Slightly lighter than background
         grid_spacing = 50
-        
+
         # Draw vertical lines
-        for x in range(0, 1280, grid_spacing):
-            cv2.line(self.canvas, (x, 0), (x, 720), grid_color, 1)
-        
+        for x in range(0, self.width, grid_spacing):
+            cv2.line(self.canvas, (x, 0), (x, self.height), grid_color, 1)
+
         # Draw horizontal lines
-        for y in range(0, 720, grid_spacing):
-            cv2.line(self.canvas, (0, y), (1280, y), grid_color, 1)
+        for y in range(0, self.height, grid_spacing):
+            cv2.line(self.canvas, (0, y), (self.width, y), grid_color, 1)
     
     def draw_modern_ui(self, frame):
         """Draw modern UI elements with sleek design"""
@@ -183,7 +194,9 @@ class FingerWhiteboard:
                    cv2.FONT_HERSHEY_DUPLEX, 1.2, self.ui_text_color, 2)
         
         # Add subtitle with instructions
-        cv2.putText(frame, "Thumb+Pointer: Draw | Pointer+Middle: Erase | 1-8: Colors | S: Screenshot | C: Clear | Q: Quit", 
+        subtitle = ("Thumb+Pointer: Draw | Pointer+Middle: Erase | 1-8: Colors | S: Screenshot | C: Clear | Q: Quit"
+                    if self.keyboard_hints else "Thumb+Pointer: Draw | Pointer+Middle: Erase")
+        cv2.putText(frame, subtitle,
                    (20, 65), cv2.FONT_HERSHEY_SIMPLEX, 0.6, self.ui_secondary_text, 1)
         
         # Status indicator with better positioning
@@ -318,13 +331,113 @@ class FingerWhiteboard:
         instructions = [
             "👍 Thumb + Pointer: Draw",
             "✌️ Pointer + Middle: Erase", 
-            "1-8: Colors • +/-: Brush • C: Clear"
+            "1-8: Colors • +/-: Brush • C: Clear" if self.keyboard_hints else "Colors and brush: use the sidebar"
         ]
         
         for i, instruction in enumerate(instructions):
             cv2.putText(frame, instruction, (w - 400, panel_y + 30 + i * 25), 
                        cv2.FONT_HERSHEY_SIMPLEX, 0.5, self.ui_secondary_text, 1)
     
+    def process_frame(self, frame):
+        """Track the hand in one BGR frame, update the canvas, and return the composited frame"""
+        if frame.shape[1] != self.width or frame.shape[0] != self.height:
+            frame = cv2.resize(frame, (self.width, self.height))
+
+        
+        # Flip frame horizontally for mirror effect
+        frame = cv2.flip(frame, 1)
+        
+        # Skip hand detection processing for some frames to improve FPS
+        self.frame_skip += 1
+        results = None
+        
+        if self.frame_skip >= self.process_every_n_frames:
+            self.frame_skip = 0
+            frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+            # Process frame with MediaPipe
+            results = self.hands.process(frame_rgb)
+        
+        # Draw modern UI
+        frame = self.draw_modern_ui(frame)
+        
+        # Calculate and display FPS
+        current_fps = self.calculate_fps()
+        if current_fps is not None:
+            cv2.putText(frame, f"FPS: {current_fps:.1f}", (20, frame.shape[0] - 30), 
+                       cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
+        
+        current_gesture = "NONE"
+        
+        if results and results.multi_hand_landmarks:
+            for hand_landmarks in results.multi_hand_landmarks:
+                # Draw simplified hand landmarks for better performance
+                self.mp_drawing.draw_landmarks(
+                    frame, hand_landmarks, self.mp_hands.HAND_CONNECTIONS,
+                    self.mp_drawing.DrawingSpec(color=(0, 255, 0), thickness=1, circle_radius=1),
+                    self.mp_drawing.DrawingSpec(color=(255, 0, 0), thickness=1)
+                )
+                
+                # Detect gesture
+                gesture = self.detect_finger_gestures(hand_landmarks.landmark)
+                current_gesture = gesture
+                self.current_gesture = gesture  # Store for UI display
+                
+                # Get pointer finger tip position for drawing/erasing
+                pointer_tip = hand_landmarks.landmark[8]
+                x = int(pointer_tip.x * frame.shape[1])
+                y = int(pointer_tip.y * frame.shape[0])
+                
+                # Store hand position for interpolation between frames
+                self.last_hand_position = (x, y)
+                
+                # Modern gesture visualization with glow effects
+                if gesture == "DRAW":
+                    # Draw cursor with glow effect
+                    self.draw_glow_cursor(frame, x, y, self.draw_color, "draw")
+                    
+                    # Draw on canvas with smooth, anti-aliased lines
+                    if self.prev_x != 0 and self.prev_y != 0:
+                        # Main line with anti-aliasing
+                        cv2.line(self.canvas, (self.prev_x, self.prev_y), (x, y), 
+                               self.draw_color, self.brush_thickness, cv2.LINE_AA)
+                        # Soft glow effect
+                        cv2.line(self.canvas, (self.prev_x, self.prev_y), (x, y), 
+                               self.draw_color, self.brush_thickness + 4, cv2.LINE_AA)
+                    else:
+                        # Start with smooth circle
+                        cv2.circle(self.canvas, (x, y), self.brush_thickness//2, self.draw_color, cv2.FILLED, cv2.LINE_AA)
+                    self.prev_x, self.prev_y = x, y
+                    
+                elif gesture == "ERASE":
+                    # Eraser cursor with modern styling
+                    self.draw_glow_cursor(frame, x, y, (239, 68, 68), "erase")
+                    
+                    # Erase with smooth circular brush
+                    cv2.circle(self.canvas, (x, y), self.eraser_thickness, (20, 20, 20), cv2.FILLED, cv2.LINE_AA)
+                    self.prev_x, self.prev_y = 0, 0
+                    
+                else:
+                    # Idle cursor
+                    self.draw_glow_cursor(frame, x, y, (156, 163, 175), "idle")
+                    self.prev_x, self.prev_y = 0, 0
+                
+                # Gesture status is now handled in the modern UI panel
+        elif self.last_hand_position and not results:
+            # Use last known hand position when skipping frames for better responsiveness
+            x, y = self.last_hand_position
+            self.draw_glow_cursor(frame, x, y, (128, 128, 128), "idle")
+            self.current_gesture = "TRACKING"
+        else:
+            # No hand detected
+            self.prev_x, self.prev_y = 0, 0
+            self.last_hand_position = None
+            self.current_gesture = "NO_HAND"
+        
+        # Combine camera feed with canvas using optimized blending
+        # Make camera feed more transparent so drawing is more visible
+        combined = cv2.addWeighted(frame, 0.4, self.canvas, 0.6, 0)
+        return combined
+
     def run(self):
         """Main application loop"""
         print("Starting Finger Whiteboard...")
@@ -342,99 +455,8 @@ class FingerWhiteboard:
             if not ret:
                 print("Error: Could not read from camera")
                 break
-            
-            # Flip frame horizontally for mirror effect
-            frame = cv2.flip(frame, 1)
-            
-            # Skip hand detection processing for some frames to improve FPS
-            self.frame_skip += 1
-            results = None
-            
-            if self.frame_skip >= self.process_every_n_frames:
-                self.frame_skip = 0
-                frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-                # Process frame with MediaPipe
-                results = self.hands.process(frame_rgb)
-            
-            # Draw modern UI
-            frame = self.draw_modern_ui(frame)
-            
-            # Calculate and display FPS
-            current_fps = self.calculate_fps()
-            if current_fps is not None:
-                cv2.putText(frame, f"FPS: {current_fps:.1f}", (20, frame.shape[0] - 30), 
-                           cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
-            
-            current_gesture = "NONE"
-            
-            if results and results.multi_hand_landmarks:
-                for hand_landmarks in results.multi_hand_landmarks:
-                    # Draw simplified hand landmarks for better performance
-                    self.mp_drawing.draw_landmarks(
-                        frame, hand_landmarks, self.mp_hands.HAND_CONNECTIONS,
-                        self.mp_drawing.DrawingSpec(color=(0, 255, 0), thickness=1, circle_radius=1),
-                        self.mp_drawing.DrawingSpec(color=(255, 0, 0), thickness=1)
-                    )
-                    
-                    # Detect gesture
-                    gesture = self.detect_finger_gestures(hand_landmarks.landmark)
-                    current_gesture = gesture
-                    self.current_gesture = gesture  # Store for UI display
-                    
-                    # Get pointer finger tip position for drawing/erasing
-                    pointer_tip = hand_landmarks.landmark[8]
-                    x = int(pointer_tip.x * frame.shape[1])
-                    y = int(pointer_tip.y * frame.shape[0])
-                    
-                    # Store hand position for interpolation between frames
-                    self.last_hand_position = (x, y)
-                    
-                    # Modern gesture visualization with glow effects
-                    if gesture == "DRAW":
-                        # Draw cursor with glow effect
-                        self.draw_glow_cursor(frame, x, y, self.draw_color, "draw")
-                        
-                        # Draw on canvas with smooth, anti-aliased lines
-                        if self.prev_x != 0 and self.prev_y != 0:
-                            # Main line with anti-aliasing
-                            cv2.line(self.canvas, (self.prev_x, self.prev_y), (x, y), 
-                                   self.draw_color, self.brush_thickness, cv2.LINE_AA)
-                            # Soft glow effect
-                            cv2.line(self.canvas, (self.prev_x, self.prev_y), (x, y), 
-                                   self.draw_color, self.brush_thickness + 4, cv2.LINE_AA)
-                        else:
-                            # Start with smooth circle
-                            cv2.circle(self.canvas, (x, y), self.brush_thickness//2, self.draw_color, cv2.FILLED, cv2.LINE_AA)
-                        self.prev_x, self.prev_y = x, y
-                        
-                    elif gesture == "ERASE":
-                        # Eraser cursor with modern styling
-                        self.draw_glow_cursor(frame, x, y, (239, 68, 68), "erase")
-                        
-                        # Erase with smooth circular brush
-                        cv2.circle(self.canvas, (x, y), self.eraser_thickness, (20, 20, 20), cv2.FILLED, cv2.LINE_AA)
-                        self.prev_x, self.prev_y = 0, 0
-                        
-                    else:
-                        # Idle cursor
-                        self.draw_glow_cursor(frame, x, y, (156, 163, 175), "idle")
-                        self.prev_x, self.prev_y = 0, 0
-                    
-                    # Gesture status is now handled in the modern UI panel
-            elif self.last_hand_position and not results:
-                # Use last known hand position when skipping frames for better responsiveness
-                x, y = self.last_hand_position
-                self.draw_glow_cursor(frame, x, y, (128, 128, 128), "idle")
-                self.current_gesture = "TRACKING"
-            else:
-                # No hand detected
-                self.prev_x, self.prev_y = 0, 0
-                self.last_hand_position = None
-                self.current_gesture = "NO_HAND"
-            
-            # Combine camera feed with canvas using optimized blending
-            # Make camera feed more transparent so drawing is more visible
-            combined = cv2.addWeighted(frame, 0.4, self.canvas, 0.6, 0)
+
+            combined = self.process_frame(frame)
             
             # Show the result with modern window title
             cv2.imshow('🎨 AI Whiteboard 2.0 - Modern Hand Gesture Control', combined)
@@ -445,8 +467,7 @@ class FingerWhiteboard:
                 print("Quitting application...")
                 break
             elif key == ord('c'):
-                self.canvas = np.full((720, 1280, 3), 20, dtype=np.uint8)  # Dark modern background
-                self.add_grid_pattern()  # Re-add grid after clearing
+                self.reset_canvas()
                 print("Canvas cleared!")
             elif key == ord('s'):
                 # Take screenshot of the entire application window
